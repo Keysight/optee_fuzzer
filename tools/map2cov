@@ -1,0 +1,108 @@
+#!/usr/bin/python
+
+"""
+ This file is part of the OP-TEE Fuzzer (https://github.com/MartijnB/optee_fuzzer).
+ Copyright (c) 2019 Riscure B.V.
+
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, version 3.
+
+ This program is distributed in the hope that it will be useful, but
+ WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program. If not, see <http://www.gnu.org/licenses/>.
+"""
+
+# Based on https://github.com/RobertBuhren/qemutrace2drcov/blob/master/qemutrace2drcov.py
+
+import sys
+import subprocess
+import capstone
+
+modules = [
+    {
+        "id": 0,
+        "base": 0xe100000,
+        "end": 0xe100000 + (1 << 16),
+        "module": "tee.elf",
+    }
+]
+
+cs_handle = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
+
+bb_data = []
+
+def handle_map_bit(f_bin, base, map_offset, map_idx):
+	bb_addr = base + (((map_offset * 8) + map_idx) << 1);
+
+	print "BB: %x (off: %x idx: %x)" % (bb_addr, map_offset, map_idx)
+
+	bin_code = ""
+	bb_size = 0
+
+	f_bin.seek(bb_addr - base + 0x10000)
+	bin_code = f_bin.read(1024)
+
+	for i in cs_handle.disasm(bin_code, bb_addr):
+		if i.mnemonic.startswith("b") or i.mnemonic.startswith("cb") or i.mnemonic == "ret":
+			bb_size = i.address + i.size - bb_addr
+			break
+
+		print("%x:\t%s\t%s" %(i.address, i.mnemonic, i.op_str))
+
+	bb_data.append(b'module[0]: 0x%x, %d' % (bb_addr - base, bb_size))
+
+
+if len(sys.argv) != 3:
+	print "map2cov <map> <cov>"
+	sys.exit(0)
+
+map_file = sys.argv[1]
+cov_file = sys.argv[2]
+
+print "Opening map file " + map_file
+
+map_offset = 0
+
+f_cov = open(cov_file, 'wb')
+
+header = b''
+header += b'DRCOV VERSION: 2\n'
+header += b'DRCOV FLAVOR: drcov\n'
+header += b'Module Table: version 2, count %d\n' % len(modules)
+header += b'Columns: id, base, end, entry, checksum, timestamp, path\n'
+
+f_cov.write(header)
+
+for m in modules:
+	# drcov: id, base, end, entry, checksum, timestamp, path
+	# frida doesnt give us entry, checksum, or timestamp
+	#  luckily, I don't think we need them.
+	f_cov.write(b'%3d, %#016x, %#016x, %#016x, %#08x, %#08x, %s\n' % (m['id'], m['base'], m['end'], 0, 0, 0, m['module'].encode('ascii')))
+
+f_bin = open('../optee_os/out/arm/core/tee.elf', 'rb')
+
+with open(map_file, 'rb') as f_map:
+	while True:
+		byte_s = f_map.read(1)
+
+		if not byte_s:
+			break
+
+		byte = ord(byte_s)
+
+		if byte > 0:
+			for idx in range(8):
+				if (byte & (1 << idx)) != 0:
+					handle_map_bit(f_bin, modules[0]['base'], map_offset, idx)
+
+		map_offset += 1
+
+bb_header =  b'BB Table: %d bbs\n' % len(bb_data)
+bb_header += b'module id, start, size:\n'
+
+f_cov.write(bb_header + b'\n'.join(bb_data))
