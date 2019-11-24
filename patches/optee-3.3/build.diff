@@ -1,0 +1,124 @@
+diff --git a/common.mk b/common.mk
+index c170f0b..2825026 100644
+--- a/common.mk
++++ b/common.mk
+@@ -34,7 +34,7 @@ CCACHE ?= $(shell which ccache) # Don't remove this comment (space is needed)
+ # # Set QEMU_VIRTFS_ENABLE to 'y' and adjust QEMU_VIRTFS_HOST_DIR
+ # # Then in QEMU, run:
+ # # $ mount -t 9p -o trans=virtio host <mount_point>
+-QEMU_VIRTFS_ENABLE		?= n
++QEMU_VIRTFS_ENABLE		?= y
+ QEMU_VIRTFS_HOST_DIR	?= $(ROOT)
+ 
+ ################################################################################
+@@ -197,7 +197,7 @@ endif
+ BUILDROOT_GETTY_PORT ?= \
+ 	$(if $(CFG_NW_CONSOLE_UART),ttyAMA$(CFG_NW_CONSOLE_UART),ttyAMA0)
+ .PHONY: buildroot
+-buildroot: optee-os
++buildroot: optee-os optee-examples-common
+ 	@mkdir -p ../out-br
+ 	@rm -f ../out-br/build/optee_*/.stamp_*
+ 	@rm -f ../out-br/extra.conf
+@@ -488,7 +496,7 @@ ifeq ($(CFG_TEE_BENCHMARK),y)
+ filelist-tee-common: benchmark-app
+ endif
+ filelist-tee-common: fl:=$(GEN_ROOTFS_FILELIST)
+-filelist-tee-common: optee-client xtest optee-examples
++filelist-tee-common: optee-client xtest optee-examples afl afl-tee
+ 	@echo "# filelist-tee-common /start" 				> $(fl)
+ 	@echo "dir /lib/optee_armtz 755 0 0" 				>> $(fl)
+ 	@if [ -e $(OPTEE_EXAMPLES_PATH)/out/ca ]; then \
+@@ -543,8 +551,14 @@ filelist-tee-common: optee-client xtest optee-examples
+ 			"$(OPTEE_CLIENT_EXPORT)/lib/libsqlfs.so.1.0 755 0 0" \
+ 									>> $(fl); \
+ 		echo "slink /lib/libsqlfs.so.1 libsqlfs.so.1.0 755 0 0" >> $(fl); \
+-		echo "slink /lib/libsqlfs.so libsqlfs.so.1 755 0 0" 	>> $(fl); \
++		echo "slink /lib/libsqlfs.so libsqlfs.so.1 755 0 0" 	>> $(fl); \	
+ 	fi
+ 	@echo "file /etc/init.d/optee $(BUILD_PATH)/init.d.optee 755 0 0"	>> $(fl)
+ 	@echo "slink /etc/rc.d/S09_optee /etc/init.d/optee 755 0 0"	>> $(fl)
+ 	@echo "# filelist-tee-common /end"				>> $(fl)
++
++	@echo "file /usr/bin/afl-fuzz $(ROOT)/afl/afl-fuzz 755 0 0"	>> $(fl)
++	@echo "file /usr/bin/afl-tee-dump $(ROOT)/afl-tee/out/dump 755 0 0"	>> $(fl)
++	@echo "file /usr/bin/tee_invoke_svc $(ROOT)/afl-tee/ca/tee_invoke_svc 755 0 0"	>> $(fl)
++
++	@echo "file /lib/optee_armtz/8aaaf200-2450-11e4-abe2-0002a5d5c51a.ta $(ROOT)/afl-tee/ta/8aaaf200-2450-11e4-abe2-0002a5d5c51a.ta 755 0 0"	>> $(fl)
+diff --git a/qemu_v8.mk b/qemu_v8.mk
+index a705cfc..7da7c6e 100644
+--- a/qemu_v8.mk
++++ b/qemu_v8.mk
+@@ -23,12 +23,27 @@ QEMU_PATH		?= $(ROOT)/qemu
+ SOC_TERM_PATH		?= $(ROOT)/soc_term
+ STRACE_PATH		?= $(ROOT)/strace
+ 
+-DEBUG = 1
++DEBUG = 0
++
++##########
++# AFL-TEE
++##########
++.PHONY: afl
++afl:
++	cd ../afl && AFL_NO_X86=1 CC=$(AARCH64_CROSS_COMPILE)gcc make clean all
++
++.PHONY: afl-tee
++afl-tee:
++	cd ../afl-tee && CC=$(AARCH64_CROSS_COMPILE)gcc make CROSS_COMPILE_S_USER=$(CROSS_COMPILE_S_USER) \
++														 CROSS_COMPILE_NS_USER=$(CROSS_COMPILE_NS_USER) \
++														 TEEC_EXPORT=$(OPTEE_CLIENT_EXPORT) \
++														 TA_DEV_KIT_DIR=$(OPTEE_OS_TA_DEV_KIT_DIR)
+ 
+ ################################################################################
+ # Targets
+ ################################################################################
+-all: arm-tf qemu soc-term linux buildroot
++#all: arm-tf qemu soc-term linux buildroot
++all: arm-tf	afl afl-tee
+ clean: arm-tf-clean edk2-clean linux-clean optee-os-clean qemu-clean \
+ 	soc-term-clean check-clean buildroot-clean
+ 
+@@ -52,7 +67,8 @@ ARM_TF_FLAGS ?= \
+ 	BL32_RAM_LOCATION=tdram \
+ 	SPD=opteed
+ 
+-arm-tf: optee-os edk2
++#arm-tf: optee-os edk2
++arm-tf: optee-os
+ 	$(ARM_TF_EXPORTS) $(MAKE) -C $(ARM_TF_PATH) $(ARM_TF_FLAGS) all fip
+ 	ln -sf $(OPTEE_OS_HEADER_V2_BIN) \
+ 		$(ARM_TF_PATH)/build/qemu/release/bl32.bin
+@@ -95,7 +111,6 @@ edk2: edk2-common
+ edk2-clean: edk2-clean-common
+ 
+ 
+-
+ ################################################################################
+ # Linux kernel
+ ################################################################################
+@@ -124,7 +139,23 @@ linux-cleaner: linux-cleaner-common
+ # OP-TEE
+ ################################################################################
+ OPTEE_OS_COMMON_FLAGS += PLATFORM=vexpress-qemu_armv8a CFG_ARM64_core=y \
+-			 DEBUG=0 CFG_PM_DEBUG=0
++			 DEBUG=0 CFG_PM_DEBUG=0 \
++			 CFG_SECURE_DATA_PATH=n \
++			 CFG_TEE_CORE_DEBUG=y \
++			 CFG_DEBUG_INFO=y \
++			 CFG_UNWIND=y \
++			 CFG_TEE_CORE_LOG_LEVEL=2 \
++			 CFG_CORE_SANITIZE_UNDEFINED=y \
++			 CFG_CORE_SANITIZE_KADDRESS=n \
++			 CFLAGS32="-fdiagnostics-color=always -O3" \
++			 CFLAGS64="-fdiagnostics-color=always -O3" \
++			 CFG_CC_OPTIMIZE_FOR_SIZE=n \
++			 CFG_CORE_HEAP_SIZE=2097152 \
++			 CFG_CORE_UNMAP_CORE_AT_EL0=n \
++			 CFG_SECSTOR_TA=n \
++			 CFG_SECURE_TIME_SOURCE_REE=n \
++			 core-platform-cflags="-O3 -ffunction-sections -fdata-sections -pipe -g3 -mstrict-align -mgeneral-regs-only -fsanitize=bounds-strict,pointer-overflow,signed-integer-overflow,vla-bound,object-size,builtin,shift,enum,nonnull-attribute,returns-nonnull-attribute -fsanitize-coverage=trace-pc -fstack-protector-strong -DCFG_AFL_ENABLE -DCFG_AFL_SKIP_TA_AUTHENTICATION"
++
+ optee-os: optee-os-common
+ 
+ OPTEE_OS_CLEAN_COMMON_FLAGS += PLATFORM=vexpress-qemu_armv8a
