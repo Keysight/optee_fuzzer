@@ -8,7 +8,7 @@ The fuzzer and ideas behind it were presented at Nullcon 2019 and Linaro Connect
 Slides: https://static.linaro.org/connect/san19/presentations/san19-225.pdf
 Video: https://www.youtube.com/watch?v=7bYAwaJ7WZw
 
-The code in this repository is a unpolished prototype that is released "as-is" to demonstrate the concepts of fuzzing a Trusted Execution Environment.
+The code in this repository is an unpolished prototype that is released "as-is" to demonstrate the concepts of fuzzing a Trusted Execution Environment.
 
 ## Build Instructions
 
