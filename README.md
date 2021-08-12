@@ -12,7 +12,7 @@ The code in this repository is an unpolished prototype that is released "as-is" 
 
 ## Build Instructions
 
-Ensure you have a fully checked out OP-TEE build tree. Clone this repository as subdirectory of the build tree. Apply the patches to the OP-TEE build system, client library and OS itself. Then build OP-TEE using the instructions provided at https://optee.readthedocs.io/en/latest/building/gits/build.html. As last step build the fuzzer using "make fuzzer" in the OP-TEE build folder. Additionally, cross-compile AFL for ARM.
+Ensure you have a fully checked out OP-TEE build tree. Clone this repository as subdirectory of the build tree and name it afl-tee. Apply the patches to the OP-TEE build system, client library and OS itself. Then build OP-TEE using the instructions provided at https://optee.readthedocs.io/en/latest/building/gits/build.html. As last step build the fuzzer using "make fuzzer" in the OP-TEE build folder. Additionally, cross-compile AFL for ARM.
 
 Note: the provided (raw) patches are for OP-TEE 3.3.0. Porting them to a different OP-TEE version requires most likely some changes.
 
